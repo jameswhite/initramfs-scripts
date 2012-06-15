@@ -1,0 +1,48 @@
+#!/bin/sh
+PREREQ=''
+prereqs() { 
+    echo "$PREREQ" 
+}
+case $1 in
+prereqs)
+  prereqs
+  exit 0
+  ;;
+esac
+
+/sbin/depmod -a
+/sbin/modprobe aufs
+
+# Boot normally when the user selects single user mode.
+if grep single /proc/cmdline >/dev/null; then exit 0; fi
+if grep rw-root /proc/cmdline >/dev/null; then exit 0; fi
+
+# Define our acutal root and our ro/rw mount points
+ro_mount_point="${rootmnt%/}.ro"
+rw_mount_point="${rootmnt%/}.rw"
+
+# Create mount points for the read-only and read/write layers:
+mkdir "${ro_mount_point}" "${rw_mount_point}"
+
+# Move the already-mounted root filesystem to the ro mount point:
+mount --move "${rootmnt}" "${ro_mount_point}"
+
+# Mount the read/write filesystem:
+mount -t tmpfs root.rw "${rw_mount_point}"
+
+# Mount the union:
+#mount -t aufs -o br:${rw_mount_point}:${ro_mount_point} none /root
+mount -t aufs -o "dirs=${rw_mount_point}=rw:${ro_mount_point}=ro" root.union "${rootmnt}"
+
+# Make sure the individual ro and rw mounts are accessible from within the root
+# once the union is assumed as /.  This makes it possible to access the
+# component filesystems individually.
+
+mkdir "${rootmnt}/ro" "${rootmnt}/rw"
+mount --move "${ro_mount_point}" "${rootmnt}/ro"
+mount --move "${rw_mount_point}" "${rootmnt}/rw"
+
+# Make sure checkroot.sh doesn't run.  It might fail or erroneously remount /.
+rm -f "${rootmnt}/etc/rcS.d"/S[0-9][0-9]checkroot.sh
+#echo "Sleeping 900"
+#sleep 900

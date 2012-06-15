@@ -1,0 +1,18 @@
+# List of modules that you want to include in your initramfs.
+#
+# Syntax:  module_name [args ...]
+#
+# You must run update-initramfs(8) to effect this change.
+#
+# Examples:
+aes-i586
+dm-mod
+dm-crypt
+sha256-generic
+mmc-core
+mmc-block
+sdhci
+aufs
+tmpfs
+usb-storage
+cs5535_gpio

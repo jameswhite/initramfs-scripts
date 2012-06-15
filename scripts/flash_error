@@ -1,0 +1,24 @@
+#!/bin/sh
+while [ 1 ];do
+    if [ -f /tmp/current_error_level ]; then
+        ERROR_LEVEL=$(cat /tmp/current_error_level)
+        if [ -z "${ERROR_LEVEL}" ];then
+            echo 0 > /dev/error_led
+        fi
+        export COUNT=0;
+        export ERROR=1;
+        export MAX=${ERROR_LEVEL};
+        while [ "${COUNT}" -lt "${MAX}" ]; do
+            if [ "${ERROR}" -eq "1" ];then
+                export ERROR=0
+            else
+                export ERROR=1;
+                export COUNT=$(expr ${COUNT} + 1);
+            fi
+            echo $ERROR > /dev/error_led;
+            /scripts/millisleep 400
+        done;
+        echo 0 > /dev/error_led;
+        sleep 3
+    fi
+done
