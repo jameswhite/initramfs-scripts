@@ -1,28 +1,29 @@
 #!/bin/sh
 # Example boot script
 
-PREREQ="mdadm" 
+PREREQ="mdadm"
 
-prereqs(){         
-    echo "$PREREQ" 
+prereqs(){
+    echo "$PREREQ"
 }
 
 . /scripts/functions
 
-case $1 in 
+case $1 in
     prereqs)
         prereqs
         exit 0
-    ;; 
+    ;;
 esac
-# Begin real processing below this line 
+
+# Begin real processing below this line
 ################################################################################
 # module args
 mod_args=$(dmesg | grep "cs5535_gpio:" | sed -e 's/.*cs5535_gpio: //')
 if [ ! -z "${mod_args}" ]; then
     major=$(echo ${mod_args} | sed -e 's/.*major=//')
     modprobe cs5535_gpio $mod_args
-    if [ ! -z "${major}" ]; then 
+    if [ ! -z "${major}" ]; then
         # mknod
         if [ -c /dev/error_led ];then
             if [ "$(stat -c "%F %t %T" /dev/error_led)" != "character special file fc 6" ];then
@@ -40,51 +41,84 @@ else
 fi
 ################################################################################
 /scripts/flash_error &
+FLASH_ERROR=$!
 ################################################################################
-# wait for the USB Key
 log_begin_msg "Starting root-on-crypt"
-/sbin/modprobe usb-storage
-while [ ! -b /dev/sdb ];do 
-    echo "Waiting for USB Key.";
-    echo 2 > /tmp/current_error_level
-    sleep 1 ; 
-done
-echo 0 > /dev/error_led
-################################################################################
-# wait until it mounts
-if [ ! -d /cryptkeys/boot ]; then mkdir -p /cryptkeys/boot; fi
-while [ ! -f /cryptkeys/boot/crypttab ]; do
-    /bin/mount -t ext2 /dev/sdb1 /cryptkeys/boot || echo "could not read /cryptkeys/boot/crypttab"
-done
-################################################################################
-# decrypt the compact flash
-/sbin/modprobe dm_mod
-/bin/cat /cryptkeys/boot/crypttab | \
-awk '{print "cryptsetup --key-file /cryptkeys"$3" luksOpen "$2" "$1}'| \
-    while read READY_DEVICE ; do
-            echo "${READY_DEVICE}"
-            ${READY_DEVICE}
-        done
-FORCE_SECURE=0;
-if [ -f "/cryptkeys/boot/force_secure" ]; then
-    FORCE_SECURE=1;
+
+# look for our one-time-reboot
+if [ ! -d /boot ] ;then mkdir -p /boot; fi
+mount | grep '/boot'
+if [ $? -ne 0  ]; then
+  mount -t ext2 /dev/sda1 /boot
+fi
+if [ -f /boot/onetimepad ]; then 
+  cryptsetup --key-file /boot/onetimepad luksOpen /dev/sda2 crypt_dev_sda2
+  cp /boot/onetimepad /tmp/crypt_dev_sda2.key
+  umount /boot
+else
+    # wait for the USB Key
+    /sbin/modprobe usb-storage
+    while [ ! -b /dev/sdb ];do
+        echo "Waiting for USB Key.";
+        echo 2 > /tmp/current_error_level
+        sleep 1 ;
+    done
+    echo 0 > /dev/error_led
+    kill -9 $FLASH_ERROR
+    ################################################################################
+    # wait until it mounts
+    if [ ! -d /cryptkeys/boot ]; then mkdir -p /cryptkeys/boot; fi
+    while [ ! -f /cryptkeys/boot/crypttab ]; do
+        /bin/mount -t ext2 /dev/sdb1 /cryptkeys/boot || echo "could not read /cryptkeys/boot/crypttab"
+    done
+    ################################################################################
+    # decrypt the compact flash
+    /sbin/modprobe dm_mod
+    
+    /bin/cat /cryptkeys/boot/crypttab | \
+    awk '{print "cryptsetup --key-file /cryptkeys"$3" luksOpen "$2" "$1}'| \
+        while read READY_DEVICE ; do
+                echo "${READY_DEVICE}"
+                ${READY_DEVICE}
+            done
+    cp /cryptkeys/boot/crypt_dev_sda2 /tmp/crypt_dev_sda2.key
+    FORCE_SECURE=0;
+    if [ -f "/cryptkeys/boot/force_secure" ]; then
+        FORCE_SECURE=1;
+    fi
+
+    if [ -f /cryptkeys/boot/ip_static_config ]; then
+        cp /cryptkeys/boot/ip_static_config /tmp/ip_static_config
+    fi
+    
+    if [ -f /cryptkeys/boot/wifi_credentials ]; then
+        cp /cryptkeys/boot/wifi_credentials /tmp/wifi_credentials
+    fi
+    /bin/umount /cryptkeys/boot
 fi
 
-if [ -f /cryptkeys/boot/wifi_credentials ]; then
-    /bin/cp /cryptkeys/boot/wifi_credentials /dev/shm/wifi_credentials
+# copy the key to the encrypted filesystem so we can manipulate the luks header for a warm reboot
+mkdir -p /mnt
+mount -t ext2 /dev/mapper/crypt_dev_sda2 /mnt
+if [ -f /tmp/crypt_dev_sda2.key ]; then
+    cp /tmp/crypt_dev_sda2.key /mnt/tmp/.luks.key
 fi
+umount /mnt
 
-/bin/umount /cryptkeys/boot
 ################################################################################
 # wait until it's removed
 if [ ${FORCE_SECURE} -eq 1 ];then
-    while [ -b /dev/sdb ];do 
+    /scripts/flash_error &
+    FLASH_ERROR=$!
+    while [ -b /dev/sdb ];do
         echo 3 > /tmp/current_error_level
         echo "Waiting for USB Key Removal.";
-        sleep 1 ; 
+        sleep 1 ;
     done
+    kill -9 $FLASH_ERROR
 fi
 echo 0 > /dev/error_led
 ################################################################################
 echo 0 > /tmp/current_error_level
 exit 0
+
